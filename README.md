@@ -20,10 +20,17 @@ A warped extra-dimension model on the topology I x (S^2 v S^2) with Z_8 discrete
 
 **Falsifiable prediction:** delta_CP(PMNS) = +135 degrees. Testable by DUNE (~2029).
 
+## Papers
+
+| # | Title | DOI |
+|---|-------|-----|
+| 1 | Warped compactification on S^2 v S^2 with Z_8 holonomy: 25 predictions from one geometric input | [10.5281/zenodo.18805970](https://doi.org/10.5281/zenodo.18805970) |
+| 2 | The Genetic Code from Z_8 Holonomy on S^2 v S^2: Watson-Crick Pairing, Reading Frame, and Double Helix Uniqueness | [10.5281/zenodo.18806726](https://doi.org/10.5281/zenodo.18806726) |
+
 ## Structure
 
 ```
-paper/           LaTeX source and compiled PDF (PRD two-column format)
+paper/           LaTeX source and compiled PDFs (PRD two-column format)
 computation/     Python verification scripts
 visualization/   Interactive 3D models (Three.js)
 images/          Geometry visualizations (matplotlib)
