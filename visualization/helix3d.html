@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Source Protocol — Double Helix at the Junction</title>
+<style>
+  body { margin: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  #info {
+    position: absolute; bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    color: rgba(180,160,255,0.6); font: 13px monospace;
+    pointer-events: none; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="info">drag to rotate · scroll to zoom · double helix emanating from the singularity</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000005);
+scene.fog = new THREE.FogExp2(0x000005, 0.025);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.01, 100);
+camera.position.set(4, 2, 4);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.4;
+controls.target.set(0, 0, 0);
+
+const k = 0.7;
+const zMax = 5.0;
+
+function warpRadius(z) { return Math.exp(-k * Math.abs(z)); }
+
+// === FUNNEL SURFACE (translucent) ===
+function buildFunnel() {
+  const group = new THREE.Group();
+  const zSteps = 250, tSteps = 64;
+  const positions = [], colors = [], indices = [];
+
+  for (let i = 0; i <= zSteps; i++) {
+    const z = -zMax + (2 * zMax * i) / zSteps;
+    const r = warpRadius(z);
+    for (let j = 0; j <= tSteps; j++) {
+      const t = (2 * Math.PI * j) / tSteps;
+      positions.push(r * Math.cos(t), z, r * Math.sin(t));
+      const p = Math.pow(r, 0.4);
+      colors.push(0.25 + 0.3 * p, 0.1 + 0.15 * p, 0.4 + 0.4 * p);
+    }
+  }
+  for (let i = 0; i < zSteps; i++) {
+    for (let j = 0; j < tSteps; j++) {
+      const a = i * (tSteps + 1) + j, b = a + tSteps + 1;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setIndex(indices);
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+
+  group.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false,
+  })));
+  group.add(new THREE.Mesh(geo.clone(), new THREE.MeshBasicMaterial({
+    vertexColors: true, wireframe: true, transparent: true, opacity: 0.18,
+  })));
+  return group;
+}
+
+// === RINGS (non-uniform, dense at throat) ===
+function buildRings() {
+  const group = new THREE.Group();
+  const zPos = [];
+  for (let i = 0; i < 45; i++) {
+    const t = i / 44;
+    const z = 0.015 + (zMax - 0.015) * Math.pow(t, 2.8);
+    zPos.push(z, -z);
+  }
+  for (const z of zPos) {
+    const r = warpRadius(z);
+    const pts = [];
+    for (let j = 0; j <= 128; j++) {
+      const t = (2 * Math.PI * j) / 128;
+      pts.push(new THREE.Vector3(r * Math.cos(t), z, r * Math.sin(t)));
+    }
+    const intensity = Math.pow(r, 0.3);
+    group.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({
+        color: new THREE.Color(0.3 + 0.5 * intensity, 0.15 + 0.3 * intensity, 0.5 + 0.4 * intensity),
+        transparent: true, opacity: 0.1 + 0.35 * intensity,
+      })
+    ));
+  }
+  return group;
+}
+
+// === DOUBLE HELIX emanating from the junction ===
+function buildDoubleHelix() {
+  const group = new THREE.Group();
+
+  // Two strands, 180 degrees apart, spiraling through the funnel
+  for (let strand = 0; strand < 2; strand++) {
+    const phaseOffset = strand * Math.PI; // 180 degrees apart
+    const pts = [];
+    const colors = [];
+    const n = 3000;
+
+    for (let i = 0; i <= n; i++) {
+      const z = -zMax + (2 * zMax * i) / n;
+      const r = warpRadius(z) * 0.75;
+
+      // Helix winds tighter near throat, looser far away
+      // The winding rate is proportional to curvature ~ 1/r
+      const windRate = 18;
+      const phase = phaseOffset + windRate * Math.sign(z) * (1 - Math.exp(-3.0 * Math.abs(z)));
+
+      pts.push(new THREE.Vector3(r * Math.cos(phase), z, r * Math.sin(phase)));
+
+      // Color: golden-orange near throat, fading outward
+      const prox = Math.pow(warpRadius(z), 0.5);
+      if (strand === 0) {
+        colors.push(1.0, 0.6 + 0.4 * prox, 0.05 + 0.15 * prox); // gold
+      } else {
+        colors.push(1.0, 0.4 + 0.3 * prox, 0.1 + 0.2 * prox); // amber
+      }
+    }
+
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+    // Main strand
+    group.add(new THREE.Line(geo, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9,
+    })));
+    // Glow
+    group.add(new THREE.Line(geo.clone(), new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.15,
+    })));
+  }
+
+  // === BASE PAIR RUNGS connecting the two strands ===
+  const rungCount = 80;
+  for (let i = 0; i < rungCount; i++) {
+    const t = i / (rungCount - 1);
+    const z = -zMax + 2 * zMax * t;
+    const r = warpRadius(z) * 0.75;
+    const windRate = 18;
+    const basePhase = windRate * Math.sign(z) * (1 - Math.exp(-3.0 * Math.abs(z)));
+
+    const phase1 = basePhase;
+    const phase2 = basePhase + Math.PI;
+
+    const p1 = new THREE.Vector3(r * Math.cos(phase1), z, r * Math.sin(phase1));
+    const p2 = new THREE.Vector3(r * Math.cos(phase2), z, r * Math.sin(phase2));
+
+    const rungGeo = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+
+    // Color rungs by position — 4 colors like nucleotide bases
+    const baseColors = [0x44ff88, 0xff4466, 0x4488ff, 0xffaa22];
+    const colorIdx = i % 4;
+
+    group.add(new THREE.Line(rungGeo, new THREE.LineBasicMaterial({
+      color: baseColors[colorIdx],
+      transparent: true,
+      opacity: 0.25 + 0.4 * Math.pow(warpRadius(z), 0.5),
+    })));
+  }
+
+  return group;
+}
+
+// === S²∨S² at the junction (two small spheres touching) ===
+function buildJunctionSpheres() {
+  const group = new THREE.Group();
+  const sphereR = 0.12;
+  const offset = sphereR * 0.95;
+
+  // UV sphere (blue)
+  const s1Geo = new THREE.SphereGeometry(sphereR, 24, 24);
+  const s1Mat = new THREE.MeshBasicMaterial({
+    color: 0x3355ff, transparent: true, opacity: 0.25, wireframe: true,
+  });
+  const s1 = new THREE.Mesh(s1Geo, s1Mat);
+  s1.position.set(-offset, 0, 0);
+  group.add(s1);
+
+  // IR sphere (magenta)
+  const s2Geo = new THREE.SphereGeometry(sphereR, 24, 24);
+  const s2Mat = new THREE.MeshBasicMaterial({
+    color: 0xcc44ff, transparent: true, opacity: 0.25, wireframe: true,
+  });
+  const s2 = new THREE.Mesh(s2Geo, s2Mat);
+  s2.position.set(offset, 0, 0);
+  group.add(s2);
+
+  // Junction point — white glow
+  const jGeo = new THREE.SphereGeometry(0.035, 32, 32);
+  const jMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  group.add(new THREE.Mesh(jGeo, jMat));
+
+  // Halo
+  const hGeo = new THREE.SphereGeometry(0.08, 32, 32);
+  const hMat = new THREE.MeshBasicMaterial({
+    color: 0xeeddff, transparent: true, opacity: 0.2,
+  });
+  group.add(new THREE.Mesh(hGeo, hMat));
+
+  // Point light at junction
+  group.add(new THREE.PointLight(0xddccff, 4, 10));
+
+  return group;
+}
+
+// === Throat glow ring ===
+function buildThroatGlow() {
+  const group = new THREE.Group();
+  for (let i = 0; i < 8; i++) {
+    const r = 0.02 + i * 0.015;
+    const pts = [];
+    for (let j = 0; j <= 64; j++) {
+      const t = (2 * Math.PI * j) / 64;
+      pts.push(new THREE.Vector3(r * Math.cos(t), 0, r * Math.sin(t)));
+    }
+    group.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.3 - i * 0.03 })
+    ));
+  }
+  return group;
+}
+
+// === Stars ===
+function buildStars() {
+  const positions = [];
+  for (let i = 0; i < 1500; i++) {
+    positions.push((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50, (Math.random() - 0.5) * 50);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.Points(geo, new THREE.PointsMaterial({
+    color: 0x7755aa, size: 0.02, transparent: true, opacity: 0.4,
+  }));
+}
+
+// === Assemble ===
+scene.add(buildFunnel());
+scene.add(buildRings());
+scene.add(buildDoubleHelix());
+scene.add(buildJunctionSpheres());
+scene.add(buildThroatGlow());
+scene.add(buildStars());
+scene.add(new THREE.AmbientLight(0x221133, 0.3));
+
+// === Animate ===
+let time = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  time += 0.005;
+
+  // Gentle pulse on the junction point light
+  const jLight = scene.children.find(c => c.isGroup && c.children.some(ch => ch.isPointLight));
+  if (jLight) {
+    const pl = jLight.children.find(c => c.isPointLight);
+    if (pl) pl.intensity = 3.5 + 1.5 * Math.sin(time * 2);
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>

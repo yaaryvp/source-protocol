@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Source Protocol — Funnel Geometry</title>
+<style>
+  body { margin: 0; background: #000; overflow: hidden; }
+  canvas { display: block; }
+  #info {
+    position: absolute; bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    color: rgba(180,160,255,0.6); font: 13px monospace;
+    pointer-events: none; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="info">drag to rotate · scroll to zoom · Source Protocol funnel geometry</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// --- Scene setup ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000008);
+scene.fog = new THREE.FogExp2(0x000008, 0.04);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 100);
+camera.position.set(3.5, 1.5, 3.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.5;
+
+// --- SP Parameters ---
+const k = 0.8;       // warp factor scale
+const zMax = 5.0;    // extent of extra dimension
+const segments = 200; // mesh resolution
+
+// --- Warp factor: r(z) = e^{-k|z|} ---
+function warpRadius(z) {
+  return Math.exp(-k * Math.abs(z));
+}
+
+// --- Build funnel surface ---
+function buildFunnel() {
+  const group = new THREE.Group();
+
+  // Parametric surface: z from -zMax to zMax, theta from 0 to 2pi
+  const zSteps = 300;
+  const thetaSteps = 64;
+  const geometry = new THREE.BufferGeometry();
+  const positions = [];
+  const colors = [];
+
+  for (let i = 0; i <= zSteps; i++) {
+    const z = -zMax + (2 * zMax * i) / zSteps;
+    const r = warpRadius(z);
+    for (let j = 0; j <= thetaSteps; j++) {
+      const theta = (2 * Math.PI * j) / thetaSteps;
+      positions.push(r * Math.cos(theta), z, r * Math.sin(theta));
+
+      // Color: purple far, white near throat
+      const proximity = Math.pow(r, 0.4);
+      colors.push(
+        0.3 + 0.7 * proximity,
+        0.15 + 0.85 * proximity,
+        0.5 + 0.5 * proximity
+      );
+    }
+  }
+
+  const indices = [];
+  for (let i = 0; i < zSteps; i++) {
+    for (let j = 0; j < thetaSteps; j++) {
+      const a = i * (thetaSteps + 1) + j;
+      const b = a + thetaSteps + 1;
+      indices.push(a, b, a + 1);
+      indices.push(b, b + 1, a + 1);
+    }
+  }
+
+  geometry.setIndex(indices);
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+
+  // Semi-transparent surface
+  const surfaceMat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.12,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  group.add(new THREE.Mesh(geometry, surfaceMat));
+
+  // Wireframe overlay
+  const wireMat = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.25,
+  });
+  group.add(new THREE.Mesh(geometry.clone(), wireMat));
+
+  return group;
+}
+
+// --- Ring gridlines (non-uniform spacing — dense near throat) ---
+function buildRings() {
+  const group = new THREE.Group();
+  // Exponentially spaced: dense near z=0
+  const zPos = [];
+  for (let i = 0; i < 50; i++) {
+    const t = i / 49;
+    const z = 0.02 + (zMax - 0.02) * Math.pow(t, 2.5); // quadratic spacing
+    zPos.push(z, -z);
+  }
+
+  for (const z of zPos) {
+    const r = warpRadius(z);
+    const pts = [];
+    for (let j = 0; j <= 128; j++) {
+      const theta = (2 * Math.PI * j) / 128;
+      pts.push(new THREE.Vector3(r * Math.cos(theta), z, r * Math.sin(theta)));
+    }
+    const geom = new THREE.BufferGeometry().setFromPoints(pts);
+    const intensity = Math.pow(r, 0.3);
+    const mat = new THREE.LineBasicMaterial({
+      color: new THREE.Color(0.4 + 0.6 * intensity, 0.2 + 0.4 * intensity, 0.7 + 0.3 * intensity),
+      transparent: true,
+      opacity: 0.15 + 0.5 * intensity,
+      linewidth: 1,
+    });
+    group.add(new THREE.Line(geom, mat));
+  }
+  return group;
+}
+
+// --- 8 Meridian lines (Z₈ symmetry) ---
+function buildMeridians() {
+  const group = new THREE.Group();
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI) / 4;
+    const pts = [];
+    for (let j = 0; j <= 400; j++) {
+      const z = -zMax + (2 * zMax * j) / 400;
+      const r = warpRadius(z);
+      pts.push(new THREE.Vector3(r * Math.cos(angle), z, r * Math.sin(angle)));
+    }
+    const geom = new THREE.BufferGeometry().setFromPoints(pts);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x6040c0,
+      transparent: true,
+      opacity: 0.3,
+    });
+    group.add(new THREE.Line(geom, mat));
+  }
+  return group;
+}
+
+// --- Loxodrome helix spiraling through the funnel ---
+function buildLoxodrome() {
+  const group = new THREE.Group();
+  const pts = [];
+  const colors = [];
+  const nPoints = 2000;
+  const nTurns = 14;
+
+  for (let i = 0; i <= nPoints; i++) {
+    const t = -zMax + (2 * zMax * i) / nPoints;
+    const r = warpRadius(t) * 0.92; // slightly inside surface
+    // Phase accelerates near throat (more turns where curvature is high)
+    const phase = nTurns * 2 * Math.PI * Math.sign(t) * (1 - Math.exp(-2.5 * Math.abs(t)));
+    pts.push(new THREE.Vector3(r * Math.cos(phase), t, r * Math.sin(phase)));
+
+    // Color gradient: gold near throat, orange at edges
+    const proximity = Math.pow(warpRadius(t), 0.5);
+    colors.push(1.0, 0.55 + 0.45 * proximity, 0.1 * proximity);
+  }
+
+  const geom = new THREE.BufferGeometry().setFromPoints(pts);
+  geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+  // Main line
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.85,
+    linewidth: 2,
+  });
+  group.add(new THREE.Line(geom, mat));
+
+  // Glow pass
+  const glowMat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.2,
+    linewidth: 4,
+  });
+  group.add(new THREE.Line(geom.clone(), glowMat));
+
+  return group;
+}
+
+// --- Throat glow (point light + sphere) ---
+function buildThroat() {
+  const group = new THREE.Group();
+
+  // Glowing sphere at throat
+  const throatGeo = new THREE.SphereGeometry(0.04, 32, 32);
+  const throatMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  group.add(new THREE.Mesh(throatGeo, throatMat));
+
+  // Glow halo
+  const haloGeo = new THREE.SphereGeometry(0.12, 32, 32);
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0xccaaff,
+    transparent: true,
+    opacity: 0.15,
+  });
+  group.add(new THREE.Mesh(haloGeo, haloMat));
+
+  // Point light
+  const light = new THREE.PointLight(0xccaaff, 3, 8);
+  group.add(light);
+
+  return group;
+}
+
+// --- Ambient particles (stars) ---
+function buildStars() {
+  const geo = new THREE.BufferGeometry();
+  const positions = [];
+  for (let i = 0; i < 2000; i++) {
+    positions.push(
+      (Math.random() - 0.5) * 40,
+      (Math.random() - 0.5) * 40,
+      (Math.random() - 0.5) * 40
+    );
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({ color: 0x8866cc, size: 0.02, transparent: true, opacity: 0.4 });
+  return new THREE.Points(geo, mat);
+}
+
+// --- Assemble scene ---
+scene.add(buildFunnel());
+scene.add(buildRings());
+scene.add(buildMeridians());
+scene.add(buildLoxodrome());
+scene.add(buildThroat());
+scene.add(buildStars());
+
+// Ambient light
+scene.add(new THREE.AmbientLight(0x221133, 0.5));
+
+// --- Animation loop ---
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// --- Resize handler ---
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
